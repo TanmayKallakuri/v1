@@ -1,0 +1,8 @@
+# Python bytecode and test caches (machine-generated, not content)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment / secrets (none committed; guard against future)
+.env
+.env.*
