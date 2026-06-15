@@ -106,10 +106,18 @@ def map_sign(txn_type: str, open_balance: Decimal) -> tuple[Decimal, str]:
 
 
 def derive_bucket(as_of_date: date, txn_date: date | None, due_date: date | None) -> str:
-    """Reconstruct the aging bucket from stored dates.
+    """Recompute an aging bucket from dates. NOT the source of truth.
 
-    Verified against every real Aging Detail row: QBD ages from the transaction
-    date, falling back to the due date only when the transaction date is absent.
+    The authoritative bucket is qbd_bucket, the value QuickBooks reported and we
+    stored. This function is retained for a planned v1.1 soft-validation check:
+    recompute the bucket from dates and flag (do not fail) any disagreement with
+    qbd_bucket, which can surface a QuickBooks-side aging anomaly. It is
+    deliberately NOT wired into the readback path, because letting a recomputed
+    value stand in for QuickBooks' own number is exactly the fragility this
+    change removed. QBD appears to age from the transaction date, falling back to
+    the due date when the transaction date is absent, but that heuristic is only
+    as trustworthy as one month of one tenant's data, which is why it validates
+    rather than decides.
     """
     effective = txn_date if txn_date is not None else due_date
     if effective is None:
@@ -217,10 +225,10 @@ def _load_items_batch(conn, tenant_id, as_of_date, report, report_type, label):
             customer_ids[item.customer_key] = customer_id
         conn.execute(
             "INSERT INTO ar_transactions "
-            "(tenant_id, batch_id, customer_id, invoice_number, txn_type, amount, direction, txn_date) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "(tenant_id, batch_id, customer_id, invoice_number, txn_type, amount, direction, txn_date, qbd_bucket) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (tenant_id, batch_id, customer_id, item.num, item.txn_type,
-             amount, direction, item.txn_date),
+             amount, direction, item.txn_date, item.bucket),
         )
     return batch_id, True, customer_ids
 
@@ -342,7 +350,7 @@ def _readback_items(conn, tenant_id: str, batch_id, with_buckets: bool) -> Parse
     rep = ParsedReport(report_type, str(as_of), filename, sha, enc)
     rows = conn.execute(
         "SELECT c.raw_name, c.normalized_name, t.txn_type, t.txn_date, "
-        "COALESCE(t.invoice_number, ''), t.amount, t.direction, i.due_date "
+        "COALESCE(t.invoice_number, ''), t.amount, t.direction, i.due_date, t.qbd_bucket "
         "FROM ar_transactions t "
         "JOIN customers c ON c.customer_id = t.customer_id "
         "LEFT JOIN invoices i ON i.tenant_id = t.tenant_id AND i.batch_id = t.batch_id "
@@ -352,10 +360,13 @@ def _readback_items(conn, tenant_id: str, batch_id, with_buckets: bool) -> Parse
         (tenant_id, batch_id),
     ).fetchall()
     grand = Decimal("0.00")
-    for raw_name, key, txn_type, txn_date, num, amount, direction, due_date in rows:
+    for raw_name, key, txn_type, txn_date, num, amount, direction, due_date, qbd_bucket in rows:
         amount = as_money(amount, f"{report_type} item {num}")
         signed = amount if direction == "increase" else -amount
-        bucket = derive_bucket(as_of, txn_date, due_date) if with_buckets else None
+        # Aging is what QuickBooks reported and stored (qbd_bucket), never a
+        # recomputation. The source system is authoritative; recomputing risks
+        # disagreeing with the number the dashboard must tie to.
+        bucket = qbd_bucket if with_buckets else None
         rep.open_items.append(OpenItem(
             customer_raw=raw_name, customer_key=key, txn_type=txn_type,
             txn_date=txn_date, num=num, po_number="", terms="",

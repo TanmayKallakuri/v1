@@ -53,7 +53,13 @@ CREATE TABLE IF NOT EXISTS ar_transactions (
     txn_type TEXT NOT NULL,
     amount NUMERIC(19,4) NOT NULL CHECK (amount > 0),
     direction TEXT NOT NULL CHECK (direction IN ('increase', 'decrease')),
-    txn_date DATE
+    txn_date DATE,
+    /* qbd_bucket is the aging bucket as reported by QuickBooks in the Aging
+       Detail export. It is the authoritative source of truth for aging: we
+       store what QBD said rather than recomputing it, because the product
+       promise is that our numbers tie to QuickBooks. Nullable because only the
+       Aging Detail report carries a bucket; Open Invoices items have none. */
+    qbd_bucket TEXT CHECK (qbd_bucket IN ('Current', '1 - 30', '31 - 60', '61 - 90', '> 90'))
 );
 
 CREATE INDEX IF NOT EXISTS ar_transactions_tenant_batch_idx
