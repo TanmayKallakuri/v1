@@ -6,3 +6,6 @@ __pycache__/
 # Local environment / secrets (none committed; guard against future)
 .env
 .env.*
+
+# Crash artifacts from the MSYS/Git Bash runtime (machine-generated junk)
+*.stackdump

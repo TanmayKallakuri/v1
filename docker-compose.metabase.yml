@@ -1,0 +1,29 @@
+# Metabase for local dashboard work, kept out of the pipeline's compose file so
+# docker-compose.yml stays focused on the qbd Postgres the pipeline needs.
+#
+# Run it alongside the main compose file (same project name, so the postgres
+# service and the metabase_data volume resolve to the existing ones and saved
+# dashboards survive):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.metabase.yml up -d
+#
+# The qbd analytics database is added separately through the Metabase UI.
+services:
+  metabase:
+    image: metabase/metabase:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Metabase keeps its own application data (accounts, dashboards, the saved
+      # connection) in an H2 file on the named volume below, so local dashboard
+      # work survives a container restart. The qbd analytics database is added
+      # separately through the Metabase UI as a data source.
+      MB_DB_FILE: /metabase-data/metabase.db
+    volumes:
+      - metabase_data:/metabase-data
+
+volumes:
+  metabase_data:
