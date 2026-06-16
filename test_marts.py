@@ -145,15 +145,25 @@ def test_by_customer_totals_sum_to_control(refreshed):
     assert total == AR_TOTAL
 
 
-def test_credits_unapplied_contains_aa_sprinkler_gj(refreshed):
+def test_credits_unapplied_is_negative_balances_only(refreshed):
     conn, _ = refreshed
-    gj = conn.execute(
-        "SELECT signed_amount FROM mart_credits_unapplied "
-        "WHERE tenant_id = %s AND source = 'unapplied_item' "
-        "AND txn_type = 'General Journal' AND raw_name = 'A & A Sprinkler'",
-        (TENANT,)).fetchall()
-    assert len(gj) == 1
-    assert gj[0][0] == SPRINKLER_GJ
+    # The tightened view drops the AR-decreasing ledger items, so the historical
+    # 2011 Old System journal entries no longer appear. Only customers whose net
+    # Aging Summary Total is negative survive, all tagged 'negative_balance'.
+    unapplied = conn.execute(
+        "SELECT count(*) FROM mart_credits_unapplied "
+        "WHERE tenant_id = %s AND source = 'unapplied_item'",
+        (TENANT,)).fetchone()
+    assert unapplied[0] == 0
+
+    rows = conn.execute(
+        "SELECT source, signed_amount FROM mart_credits_unapplied "
+        "WHERE tenant_id = %s", (TENANT,)).fetchall()
+    assert len(rows) > 0
+    for source, signed_amount in rows:
+        assert source == 'negative_balance'
+        assert signed_amount < 0
+
     neg = conn.execute(
         "SELECT signed_amount FROM mart_credits_unapplied "
         "WHERE tenant_id = %s AND source = 'negative_balance' "

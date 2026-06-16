@@ -183,8 +183,12 @@ FROM totals t
 JOIN latest_stamp st ON st.tenant_id = t.tenant_id
 WITH NO DATA;
 
-/* Credit-shaped facts of the current snapshot: customers whose Aging Summary
-   Total is negative, plus every AR-decreasing ledger item from Aging Detail. */
+/* Genuine unapplied credits of the current snapshot: only customers whose
+   Aging Summary Total is negative (overpayments / unapplied credits). The
+   prior definition also UNION'd every AR-decreasing item from Aging Detail,
+   which double-counted historical journal entries (the 2011 Old System
+   entries netting to -13,341.66) that are already reconciled into the AR
+   total. Net-negative balance is the only true signal of a current credit. */
 CREATE MATERIALIZED VIEW IF NOT EXISTS mart_credits_unapplied AS
 SELECT
     s.tenant_id,
@@ -202,23 +206,6 @@ JOIN mart_current_batches b
  AND b.report_type = 'aging_summary'
 JOIN customers c ON c.customer_id = s.customer_id
 WHERE s.bucket = 'Total' AND s.amount < 0
-UNION ALL
-SELECT
-    t.tenant_id,
-    b.as_of_date,
-    'unapplied_item' AS source,
-    c.raw_name,
-    c.normalized_name,
-    t.txn_type,
-    t.invoice_number,
-    t.txn_date,
-    CAST(-t.amount AS NUMERIC(19,4)) AS signed_amount
-FROM ar_transactions t
-JOIN mart_current_batches b
-  ON b.tenant_id = t.tenant_id AND b.batch_id = t.batch_id
- AND b.report_type = 'aging_detail'
-JOIN customers c ON c.customer_id = t.customer_id
-WHERE t.direction = 'decrease'
 WITH NO DATA;
 
 /* AR trend across every complete snapshot, with prior-snapshot deltas. */
