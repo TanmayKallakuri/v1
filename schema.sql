@@ -75,3 +75,59 @@ CREATE TABLE IF NOT EXISTS ar_aging_snapshots (
     captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, batch_id, customer_id, bucket)
 );
+
+/* Cash side of v1 (General Ledger + Balance Sheet). Same provenance pattern as
+   AR: every row carries tenant_id and the batch_id that produced it, and all
+   money is NUMERIC(19,4). Cash source files register in the same batches table
+   with report_type 'general_ledger' and 'balance_sheet'. */
+
+/* Raw landing of every General Ledger account header, for audit. The full GL is
+   landed here (cash and non-cash alike) so the source is traceable, but only
+   the cash accounts are promoted to cash_accounts below. is_cash flags the rows
+   that were promoted. */
+CREATE TABLE IF NOT EXISTS gl_raw_accounts (
+    tenant_id TEXT NOT NULL,
+    batch_id UUID NOT NULL REFERENCES batches (batch_id),
+    account_number TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    opening_balance NUMERIC(19,4) NOT NULL,
+    is_cash BOOLEAN NOT NULL,
+    as_of_date DATE NOT NULL,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, batch_id, account_number)
+);
+
+/* Canonical cash accounts: only the in-scope cash accounts, promoted from the
+   GL. ending_balance is computed as opening + sum(period transactions) because
+   the GL's own running-balance column is spreadsheet formulas. bs_balance is
+   the same account's figure on the Balance Sheet, stored alongside so the
+   per-account tie-out is auditable from the canonical tables. */
+CREATE TABLE IF NOT EXISTS cash_accounts (
+    tenant_id TEXT NOT NULL,
+    batch_id UUID NOT NULL REFERENCES batches (batch_id),
+    account_number TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    opening_balance NUMERIC(19,4) NOT NULL,
+    ending_balance NUMERIC(19,4) NOT NULL,
+    txn_count INT NOT NULL,
+    bs_balance NUMERIC(19,4),
+    as_of_date DATE NOT NULL,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, batch_id, account_number)
+);
+
+/* One row per cash reconciliation: the GL-computed cash total against the
+   Balance Sheet cash control, which must tie within one cent. References both
+   source batches (the GL batch the total was computed from and the Balance
+   Sheet batch the control came from). */
+CREATE TABLE IF NOT EXISTS cash_snapshots (
+    tenant_id TEXT NOT NULL,
+    gl_batch_id UUID NOT NULL REFERENCES batches (batch_id),
+    bs_batch_id UUID NOT NULL REFERENCES batches (batch_id),
+    as_of_date DATE NOT NULL,
+    gl_cash_total NUMERIC(19,4) NOT NULL,
+    bs_cash_control NUMERIC(19,4) NOT NULL,
+    delta NUMERIC(19,4) GENERATED ALWAYS AS (gl_cash_total - bs_cash_control) STORED,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, gl_batch_id, bs_batch_id)
+);
