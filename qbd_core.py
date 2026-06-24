@@ -21,6 +21,23 @@ from pathlib import Path
 # workflow doc Stage 4: every tie-out check uses one cent of slack.
 RECON_TOLERANCE = Decimal("0.01")
 
+# --- Cash account definition (assumption #1) --------------------------------
+# Which general ledger accounts make up "Cash" for the Cash tile. This is the
+# single source of truth: the Balance Sheet parser, the GL cash extractor, and
+# the cash reconciliation gate all import these constants, so widening or
+# narrowing the cash definition is a one-line change here, never a hunt through
+# modules. See ASSUMPTIONS.md item 1.
+#
+# v1 decision: the three spendable bank accounts only. Petty Cash and
+# Undeposited Funds are parsed and reported but deliberately excluded from the
+# cash total (Petty Cash is immaterial; Undeposited Funds double-counts against
+# the bank accounts and is not cash in hand). To count either as cash, add it
+# to CASH_ACCOUNTS once the client confirms; nothing else changes.
+CASH_BANK_ACCOUNTS = frozenset({"10000", "10050", "10100"})
+CASH_PETTY_CASH = frozenset({"10200"})
+CASH_UNDEPOSITED = frozenset({"12000"})
+CASH_ACCOUNTS = CASH_BANK_ACCOUNTS
+
 # Encodings observed across the real batch, tried in order. Three of the four
 # files are plain ASCII; Customer Balance Detail is cp1252. ASCII is a strict
 # subset of utf-8, and utf-8 failures fall through to cp1252, which decodes any

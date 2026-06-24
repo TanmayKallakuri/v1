@@ -246,3 +246,93 @@ FROM per_snapshot
 WINDOW w AS (PARTITION BY tenant_id ORDER BY as_of_date)
 ORDER BY tenant_id, as_of_date
 WITH NO DATA;
+
+/* ------------------------------------------------------------------------- */
+/* Cash serving marts (Stage 5, gold layer). Same shape as the AR marts: only  */
+/* the cash total and the per-account breakdown, fed from the canonical cash   */
+/* tables, populated only by refresh_marts.py after the cash gate passes. No   */
+/* dashboard UI here; the Metabase tiles are wired by hand against these.      */
+
+/* One stamp row per successful gated cash refresh, written in the same
+   transaction as the cash REFRESH statements. gate_passed is CHECKed true so a
+   failed gate can never produce a stamp. control_total is the Balance Sheet
+   cash control; computed_total is the GL-computed cash total. */
+CREATE TABLE IF NOT EXISTS mart_cash_refresh_stamps (
+    stamp_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    as_of_date DATE NOT NULL,
+    refreshed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    control_total NUMERIC(19,4) NOT NULL,
+    computed_total NUMERIC(19,4) NOT NULL,
+    delta NUMERIC(19,4) GENERATED ALWAYS AS (control_total - computed_total) STORED,
+    gate_passed BOOLEAN NOT NULL CHECK (gate_passed),
+    checks_passed INT NOT NULL,
+    checks_total INT NOT NULL,
+    gl_batch_id UUID NOT NULL REFERENCES batches (batch_id),
+    bs_batch_id UUID NOT NULL REFERENCES batches (batch_id)
+);
+
+/* Helper view: the latest cash snapshot per tenant (the newest as-of date, and
+   the most recently captured if a date was loaded more than once). */
+CREATE OR REPLACE VIEW mart_current_cash_batch AS
+SELECT DISTINCT ON (tenant_id)
+    tenant_id,
+    as_of_date,
+    gl_batch_id,
+    bs_batch_id
+FROM cash_snapshots
+ORDER BY tenant_id, as_of_date DESC, captured_at DESC;
+
+/* Per-account cash breakdown of the current cash snapshot. recon_delta is the
+   per-account GL ending minus its Balance Sheet balance (zero when it ties). */
+CREATE MATERIALIZED VIEW IF NOT EXISTS mart_cash_accounts AS
+SELECT
+    ca.tenant_id,
+    ca.as_of_date,
+    ca.account_number,
+    ca.account_name,
+    CAST(ca.opening_balance AS NUMERIC(19,4)) AS opening_balance,
+    CAST(ca.ending_balance AS NUMERIC(19,4)) AS ending_balance,
+    CAST(ca.bs_balance AS NUMERIC(19,4)) AS bs_balance,
+    CAST(ca.ending_balance - COALESCE(ca.bs_balance, ca.ending_balance) AS NUMERIC(19,4)) AS recon_delta,
+    ca.txn_count
+FROM cash_accounts ca
+JOIN mart_current_cash_batch b
+  ON b.tenant_id = ca.tenant_id AND b.gl_batch_id = ca.batch_id
+ORDER BY ca.tenant_id, ca.account_number
+WITH NO DATA;
+
+/* One headline cash row per tenant: the cash total, the Balance Sheet control,
+   and the reconciliation delta from the latest stamp. INNER join to the latest
+   stamp on purpose, so the mart stays empty until the first gated cash refresh. */
+CREATE MATERIALIZED VIEW IF NOT EXISTS mart_cash_summary AS
+WITH totals AS (
+    SELECT
+        ca.tenant_id,
+        ca.as_of_date,
+        CAST(COALESCE(SUM(ca.ending_balance), 0) AS NUMERIC(19,4)) AS total_cash,
+        CAST(COALESCE(SUM(ca.bs_balance), 0) AS NUMERIC(19,4)) AS bs_cash_control,
+        CAST(COUNT(*) AS INT) AS account_count
+    FROM cash_accounts ca
+    JOIN mart_current_cash_batch b
+      ON b.tenant_id = ca.tenant_id AND b.gl_batch_id = ca.batch_id
+    GROUP BY ca.tenant_id, ca.as_of_date
+),
+latest_stamp AS (
+    SELECT DISTINCT ON (tenant_id)
+        tenant_id, refreshed_at, delta, gate_passed
+    FROM mart_cash_refresh_stamps
+    ORDER BY tenant_id, stamp_id DESC
+)
+SELECT
+    t.tenant_id,
+    t.as_of_date,
+    t.total_cash,
+    t.bs_cash_control,
+    t.account_count,
+    st.delta AS recon_delta,
+    st.gate_passed,
+    st.refreshed_at
+FROM totals t
+JOIN latest_stamp st ON st.tenant_id = t.tenant_id
+WITH NO DATA;

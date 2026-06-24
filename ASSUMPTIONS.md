@@ -3,14 +3,17 @@
 These were open client questions we could not get answered in time. For each, we
 recorded the default decision we made, the reasoning behind it, and what to
 revisit if the client's answer differs. The client's bookkeeper (Maria) has now
-answered all four, forwarded by Cezar on June 23, 2026, so the status of each is
-updated below from assumed to confirmed. One item, the cash account definition,
-is confirmed in direction but still has a final figure pending Cezar's
+answered the original four (assumptions 1, 2, 3, and 5 below), forwarded by Cezar
+on June 23, 2026, so their status is updated from assumed to confirmed. One of
+them, the cash account definition, is confirmed in direction but still has a
+final figure pending Cezar's confirmation. Assumption 4 (the GL-to-subledger AR
+gap) is a later cash-side question that remains assumed, pending client
 confirmation.
 
-Of the four, only assumption 2 (Account 28000) touches reconciliation logic, and
-it is confirmed with no pipeline impact. The other three are scoping or
-presentation decisions that do not change the numbers the gate ties to.
+Of the five, only assumption 2 (Account 28000) touches reconciliation logic, and
+it is confirmed with no pipeline impact. The others are scoping or presentation
+decisions that do not change the numbers the gates tie to: the AR subledger ties
+at $609,772.89 and the cash control ties at $451,068.87, both to the cent.
 
 ## 1. Cash account definition
 
@@ -25,14 +28,22 @@ presentation decisions that do not change the numbers the gate ties to.
 - **Status:** Client leans toward all cash accounts; final figure pending Cezar's
   confirmation. The client said keep all cash accounts ("All Cash accounts should
   stay, or we can decide later"), but Maria was tentative and the figure moves
-  materially: 3 bank accounts total $451,068.87 versus all cash accounts (adding
-  Petty Cash and Undeposited Funds) at $553,519.47. Pipeline currently set to 3
+  materially: the 3 bank accounts total $451,068.87 versus all cash accounts
+  (adding Petty Cash and Undeposited Funds) at $553,519.47. The Cash tile is now
+  built and this decision is config-driven, not hardcoded: the cash account set
+  lives in one place, `CASH_ACCOUNTS` in `qbd_core.py` (with `CASH_PETTY_CASH`
+  and `CASH_UNDEPOSITED` named alongside it), and the Balance Sheet parser, the
+  GL cash extractor, and the cash gate all import it. Pipeline currently set to 3
   banks ($451,068.87); changing to all accounts is a one-line `CASH_ACCOUNTS`
   config change plus updating the gate target to $553,519.47.
 - **Revisit if the answer differs:** Once Cezar confirms the final figure, if it
   is all cash accounts, add Petty Cash and Undeposited Funds to `CASH_ACCOUNTS`
-  and move the cash gate target to $553,519.47. No reconciliation impact on AR
-  either way.
+  in `qbd_core.py`; that one line plus moving the cash gate target to $553,519.47
+  is the entire change. Petty Cash (10200, $500.00) and Undeposited Funds (12000,
+  $101,950.60) are already parsed and reported separately, just not summed into
+  the cash total. No reconciliation impact and no change to AR. The current cash
+  control ties at $451,068.87 (GL-computed cash total equals the Balance Sheet
+  cash control to the cent).
 
 ## 2. Account 28000 Customer Over-Payment
 
@@ -78,7 +89,34 @@ presentation decisions that do not change the numbers the gate ties to.
   through on the next export. We still do not alter the source. No code change on
   our side.
 
-## 4. Export cadence
+## 4. GL/Balance Sheet AR vs the AR Aging subledger ($37,581.04 difference)
+
+- **Question:** The AR account (11000) on the General Ledger and Balance Sheet
+  reads $572,191.85, but the A/R Aging Summary subledger totals $609,772.89, a
+  difference of $37,581.04. Which is "the" AR number, and must they be made to
+  agree?
+- **Decision:** This is a known and expected difference, not a pipeline error.
+  The AR trust number stays the AR Aging Summary subledger total, $609,772.89:
+  that is the report the product promises to tie to, and the AR gate ties to it
+  to the cent. The cash side independently ties the GL cash total to the Balance
+  Sheet cash control at $451,068.87. The $37,581.04 GL-to-subledger AR gap is
+  reported as a note, never silently reconciled away.
+- **Reasoning:** A GL control account and its aging subledger drift apart for
+  ordinary bookkeeping reasons, chiefly aged credits and journal activity posted
+  to the control account that the aging report buckets differently (the same
+  family of effects as the -$13,341.66 legacy credit in assumption 3). Forcing
+  the two to agree would mean altering one of the source numbers, which is
+  exactly what a trust product must not do. Fully decomposing the gap line by
+  line is a reconciliation exercise that belongs to the client's bookkeeper.
+- **Status:** ASSUMED, pending client confirmation. Documented as a known,
+  expected difference driven by aged credits and control-account activity.
+- **Revisit if the answer differs:** Fully reconciling the GL control account to
+  the aging subledger is out of v1 scope. If the client wants the gap explained
+  line by line, that is a v1.1+ analysis (decompose 28000 over-payments, aged
+  credits, and any direct journal entries to 11000); it does not change the AR
+  trust number or the cash reconciliation, both of which already tie.
+
+## 5. Export cadence
 
 - **Question:** How often will the client export the four reports, and as of what
   date?
