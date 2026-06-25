@@ -60,8 +60,8 @@ at $609,772.89 and the cash control ties at $451,068.87, both to the cent.
   can be eliminated and does not need special handling. No pipeline change is
   required: we already keep it out of the AR total and surface any balance
   separately.
-- **Revisit if the answer differs:** This is the only one of the four that
-  touches reconciliation logic. If the client confirms 28000 belongs in the AR
+- **Revisit if the answer differs:** This is the only one that affects
+  reconciliation logic. If the client confirms 28000 belongs in the AR
   total, the reconciliation gate and the AR computation must be revised, and the
   trust number itself would change. Treat any such change as a reconciliation
   change, not a display change.
